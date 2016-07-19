@@ -1,6 +1,6 @@
 ravdebug:
-	gcc -I/usr/local/include/gsl -O3 -c -g Joe_CostSim.c
-	gcc -L/usr/local/lib/ Joe_CostSim.o -lgsl -lgslcblas -lm -o Joe_CostSim
+	gcc -I/usr/local/include/gsl -O3 -c -g SpatialModel.c
+	gcc -L/usr/local/lib/ SpatialModel.o -lgsl -lgslcblas -lm -o SpatialModel
 
 
 clean:

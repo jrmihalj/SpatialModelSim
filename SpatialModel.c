@@ -5,6 +5,8 @@ typedef struct {
   
 } ParamStruct;
 
+int Debug=0;
+
 #include <time.h>
 #include "stdio.h"
 #include "string.h"
@@ -51,7 +53,8 @@ typedef struct {
 //Custom functions:
 #include "Nrutil.c"
 #include "Integration_Func.c"
-#include "JOE_DistdRK45.c"
+#include "Dispersal_Func.c"
+//#include "JOE_DistdRK45.c"
 
 long seed;
 gsl_rng *r2;  //This has to be global, to ensure that the generator doesn't start over again.
@@ -60,7 +63,8 @@ gsl_rng *r2;  //This has to be global, to ensure that the generator doesn't star
 int main(void){
   
   //Basic parameters, for loops, file printing, random numbers, etc.
-  FILE *fp;
+  FILE *fp, *fp1;
+  int i;
   
   // seed
   long seed;
@@ -111,7 +115,7 @@ int main(void){
   /*Biomass and Foliage Within-season Growth*/
 
   double feed = 0.03; //feeding rate of larvae on foliage
-  double bgrow = 0.005; // woody biomass growth rate
+  double bgrow = 0.00005; // woody biomass growth rate
   
   FxdPars[8] = feed;
   FxdPars[9] = bgrow;
@@ -143,7 +147,7 @@ int main(void){
   
   
   // Longitudinal simulation:
-  int MaxYear = 5; // How many years
+  int MaxYear = 4; // How many years
   
   //Host dynamics:
   double reprod = exp(0.962); //0.962=r from Mason1974 lambda = exp(r)
@@ -152,7 +156,7 @@ int main(void){
   double a_pred = 0; //0 means no predator model
   double b_pred = 0.16;
   
-  double disperse = 0.05; //average percent of individuals that disperse
+  double disperse = 0.1; //average percent of individuals that disperse
   
   //Foliage model params:
   double fgrow_winter = 0.05; //As a fraction of total branch biomass
@@ -168,22 +172,21 @@ int main(void){
   
   
   /**********************************************************/
-  /* Set up the Conical Lattice                             */
-  /* All cells, except top and bottom row have 8 neighbors  */
+  /* Set up the Square Lattice                              */
+  /* Edge cells have a different number of neighbors        */
   /**********************************************************/
   
-  double Lat_size = 5; //Number of rows and columns 
+  double Lat_size = 8; //Number of rows and columns 
   double Cells = pow(Lat_size, 2); //Total number of cells in lattice
 
   //Storage:
   float *N, *Z, *B, *F;
-  float *oldN, *oldZ, *oldB, *oldF;
-  float *Z_begin;
-  N = vector(1, Cells); oldN = vector(1, Cells);
-  Z = vector(1, Cells); oldZ = vector(1, Cells); Z_begin = vector(1, Cells); 
-  B = vector(1, Cells); oldB = vector(1, Cells);
-  F = vector(1, Cells); oldF = vector(1, Cells);
+  N = vector(1, Cells); 
+  Z = vector(1, Cells); 
+  B = vector(1, Cells); 
+  F = vector(1, Cells);
 
+  
   //Assign initial values for each cell:
   
   int c;
@@ -216,6 +219,18 @@ int main(void){
   
   for(y=1;y<=MaxYear;y++){
     
+    float *oldN, *oldZ, *oldB, *oldF;
+    float *Z_begin, *Percent_Defol;
+    oldN = vector(1, Cells);
+    oldZ = vector(1, Cells); 
+    oldB = vector(1, Cells);
+    oldF = vector(1, Cells);
+    Z_begin = vector(1, Cells); 
+    Percent_Defol = vector(1, Cells);
+    
+    if(Debug == 1){
+      printf("Start SEIR integration for all cells\n");
+    }
     //Run the within-season model for each cell:
     for(c=1;c<=Cells;c++){
       
@@ -232,44 +247,87 @@ int main(void){
       oldZ[c] = *(Int_Out+1);
       oldB[c] = *(Int_Out+2);
       oldF[c] = *(Int_Out+3);
+      Percent_Defol[c] = *(Int_Out+4);
       
-    } /* ALL CELLS HAVE BEEN INTEGRATED */
+    } //End cell SEIR
     
+    if(Debug == 1){
+      printf("End SEIR integration for all cells\n");
+    }
     
     /******************
      * Host dispersal
      * Tree re-seeding 
      ******************/
+    if(Debug == 1){
+      printf("Starting dispersal function \n");
+    }
     
-    Dispersal_Func(N,Z,B,oldN,oldZ,oldB,
-                   Lat_size,Cells,disperse,r2);
+    Dispersal_Func(oldN,oldZ,oldB,
+                   Lat_size,Cells,disperse,r2, y);
     
+    if(Debug == 1){
+      printf("End dispersal function \n");
+    }
     
-    //Calculate starting conditions for N w/ predator model:
-    AdjPars[9] = N_end * reprod; //* (1 - ((a_pred*b_pred*N_start)/(pow(b_pred,2)+pow(N_start,2))));
-    N_start = AdjPars[9];
-    //Calculate starting conditions for Z:
-    AdjPars[10] = Z_cum * winter + gamma * Z_start; //This Z_start is from the previous generation, so Z_n
-    Z_start = AdjPars[10]; //Now Z_start has been over-written, so Z_n+1 (i.e. the current generation)
+    /*************************
+     * OVERWINTER REPRODUCTION
+     *************************/
+    if(Debug == 1){
+      printf("Start overwintering \n");
+    }
     
-    //Calculate starting conditions for Biomass:
-    AdjPars[13] = bgrow_winter * Biom_end * (1 - (a_biom * Percent_Defol / (c_biom + Percent_Defol)));
-    B_start = AdjPars[13];
+    for(c=1;c<=Cells;c++){
+      
+      //Print the beginning and ending values:
+      fp1 = fopen("Output.dat","a");
+      fprintf(fp1, "%d\t %d\t %f\t %f\t %f\t %f\t %f\t %f\t %f\t %f\t %f\n",
+              y, c,
+              N[c], Z[c], B[c], F[c], 
+              oldN[c], oldZ[c], oldB[c], oldF[c],
+              Percent_Defol[c]
+              );
+      fclose(fp1);
+      
+      /*************************
+      * OVERWINTER REPRODUCTION
+      *************************/
+      
+      //Calculate starting conditions for N w/ predator model:
+      N[c] = oldN[c] * reprod; //* (1 - ((a_pred*b_pred*N_start)/(pow(b_pred,2)+pow(N_start,2))));
+      
+      //Calculate starting conditions for Z:
+      Z[c] = oldZ[c] * winter + gamma * Z_begin[c]; //This Z_begin is from the previous generation, so Z_n
+      
+      //Calculate starting conditions for Biomass:
+      B[c] = oldB[c] * bgrow_winter * (1 - (a_biom * Percent_Defol[c] / (c_biom + Percent_Defol[c])));
+      
+      //Calculate starting conditions for Foliage:
+      F[c] = oldF[c] + oldB[c] * fgrow_winter;
+      
+    } //End cell overwinter
     
-    //Calculate starting conditions for Foliage:
-    AdjPars[11] = Fol_end + Biom_end * fgrow_winter;
-    F_start = AdjPars[11];
+    if(Debug == 1){
+      printf("End overwintering. End year. \n");
+    }
     
+    //Free storage:
+    free_vector(oldN,1,Cells);
+    free_vector(oldZ,1,Cells); 
+    free_vector(Z_begin,1,Cells);
+    free_vector(oldB,1,Cells);
+    free_vector(oldF,1,Cells);
+    free_vector(Percent_Defol,1,Cells);
+
   }// End year
   
   
   
   //Free storage:
-  free_vector(N,1,Cells); free_vector(oldN,1,Cells);
-  free_vector(Z,1,Cells); free_vector(oldZ,1,Cells); free_vector(Z_begin,1,Cells);
-  free_vector(B,1,Cells); free_vector(oldB,1,Cells);
-  free_vector(F,1,Cells); free_vector(oldF,1,Cells);
-  
+  free_vector(N,1,Cells); 
+  free_vector(Z,1,Cells); 
+  free_vector(B,1,Cells); 
+  free_vector(F,1,Cells); 
 
   //printf("Succenn:Read in Params...\n");
   // ------------------------------------
